@@ -1,7 +1,6 @@
 # ============================
-# 🖥 Streamlit App (v22 – Full)
+# 🖥 Streamlit App (v23 – Full)
 # ============================
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -86,11 +85,11 @@ def run_pipeline(X, y):
 # Streamlit App
 # ============================
 st.set_page_config(page_title="Parkinson’s Prediction", layout="wide")
-st.title("🧠 Parkinson’s Prediction Project (v22)")
+st.title("🧠 Parkinson’s Prediction Project (v23)")
 
 tabs = st.tabs([
-    "EDA", "Model Results", "Prediction", "Retrain", "Explainability",
-    "Training Log", "Model Playground", "Model Comparison Lab"
+    "EDA", "Model Results", "Prediction", "Retrain",
+    "Explainability", "Training Log", "Playground", "Comparison Lab"
 ])
 
 # -------------------------
@@ -104,7 +103,7 @@ with tabs[0]:
     # Distribution
     fig, ax = plt.subplots()
     sns.countplot(x="status", data=df, palette="Set2", ax=ax)
-    ax.set_title("Target Distribution")
+    ax.set_title("Target Distribution (0=Healthy, 1=Parkinson’s)")
     st.pyplot(fig)
 
     # Correlation heatmap
@@ -113,9 +112,25 @@ with tabs[0]:
     ax.set_title("Correlation Heatmap")
     st.pyplot(fig)
 
-    # Export
-    csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button("⬇️ Download Data (CSV)", csv, "data.csv", "text/csv")
+    # Pairplot (sampled)
+    st.subheader("Pairplot (sampled)")
+    sampled = df.sample(min(200, len(df)), random_state=42)
+    fig = sns.pairplot(sampled, hue="status", diag_kind="kde", plot_kws={'alpha':0.5})
+    st.pyplot(fig)
+
+    # Boxplots
+    st.subheader("Feature Distribution by Status")
+    num_cols = df.drop("status", axis=1).columns[:6]
+    fig, axes = plt.subplots(2, 3, figsize=(15,8))
+    for i, col in enumerate(num_cols):
+        sns.boxplot(x="status", y=col, data=df, ax=axes[i//3, i%3])
+    st.pyplot(fig)
+
+    # Feature Importance (if exists)
+    feat_path = os.path.join(ASSETS_DIR,"feature_importance.png")
+    if os.path.exists(feat_path):
+        st.subheader("Feature Importance")
+        st.image(feat_path)
 
 # -------------------------
 # Tab 2: Model Results
@@ -126,21 +141,22 @@ with tabs[1]:
     if leaderboard:
         lb_df = pd.DataFrame({m: s["test"] for m,s in leaderboard.items()}).T.reset_index().rename(columns={"index":"Model"})
         lb_df = lb_df.sort_values(by="roc_auc", ascending=False).reset_index(drop=True)
+        lb_df.index = lb_df.index + 1
+        lb_df["Rank"] = lb_df.index
 
-        # KPIs
+        # Highlight best model
         best_row = lb_df.iloc[0]
-        cols = st.columns(5)
-        cols[0].metric("Accuracy", f"{best_row['accuracy']:.2f}")
-        cols[1].metric("Precision", f"{best_row['precision']:.2f}")
-        cols[2].metric("Recall", f"{best_row['recall']:.2f}")
-        cols[3].metric("F1", f"{best_row['f1']:.2f}")
-        cols[4].metric("ROC AUC", f"{best_row['roc_auc']:.2f}")
+        best_model = best_row["Model"]
+        st.success(f"🏆 Best Model: **{best_model}** (ROC-AUC={best_row['roc_auc']:.3f})")
 
-        st.dataframe(lb_df)
+        # Show table
+        st.dataframe(lb_df[["Rank","Model","accuracy","precision","recall","f1","roc_auc"]])
 
         # Barplot
         fig, ax = plt.subplots(figsize=(8,5))
         sns.barplot(x="roc_auc", y="Model", data=lb_df, palette="Blues_r", ax=ax)
+        for i, v in enumerate(lb_df["roc_auc"]):
+            ax.text(v+0.005, i, f"{v:.2f}", va="center")
         ax.set_title("Model Comparison (ROC AUC)")
         st.pyplot(fig)
     else:
@@ -181,10 +197,10 @@ with tabs[2]:
         st.error("No trained model found.")
 
 # -------------------------
-# Tab 4: Retrain (v22)
+# Tab 4: Retrain
 # -------------------------
 with tabs[3]:
-    st.header("🔄 Retrain Models (v22)")
+    st.header("🔄 Retrain Models")
     option = st.radio("Training Mode", ["Pipeline (all models)", "Custom"])
     uploaded = st.file_uploader("Upload new dataset (CSV)", type=["csv"])
     if uploaded:
@@ -212,7 +228,6 @@ with tabs[3]:
                 joblib.dump(new_best_model, model_path)
                 with open(leaderboard_path,"w") as f: json.dump(new_leaderboard,f,indent=4)
                 combined_df.to_csv(os.path.join(DATA_DIR,"parkinsons.csv"),index=False)
-                # log
                 log_path = os.path.join(ASSETS_DIR,"training_log.csv")
                 new_row = pd.DataFrame([{"date":datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                          "dataset_size":combined_df.shape[0],
