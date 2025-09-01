@@ -1,10 +1,19 @@
 # ============================
-# 🖥 Streamlit App (v19)
+# 🖥 Streamlit App (v20)
 # ============================
 import streamlit as st
 import pandas as pd
 import numpy as np
 import os, json, joblib, io
+import matplotlib.pyplot as plt
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix, RocCurveDisplay
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
 
 # Paths
 ASSETS_DIR = "assets"
@@ -22,12 +31,6 @@ model_path = os.path.join(MODELS_DIR, "best_model.joblib")
 def load_data():
     return pd.read_csv(os.path.join(DATA_DIR, "parkinsons.csv"))
 
-def load_metrics():
-    if os.path.exists(metrics_path):
-        with open(metrics_path) as f:
-            return json.load(f)
-    return {}
-
 def load_leaderboard():
     if os.path.exists(leaderboard_path):
         with open(leaderboard_path) as f:
@@ -43,171 +46,140 @@ def load_model():
 # Streamlit App
 # ============================
 st.set_page_config(page_title="Parkinson’s Prediction", layout="wide")
-st.title("🧠 Parkinson’s Prediction Project (v19)")
+st.title("🧠 Parkinson’s Prediction Project (v20)")
 
-tabs = st.tabs(["EDA", "Model Results", "Prediction", "Retrain", "Explainability", "Training Log"])
+tabs = st.tabs([
+    "EDA", "Model Results", "Prediction", "Retrain", "Explainability", "Training Log",
+    "Model Playground", "Model Comparison Lab"
+])
 
 # -------------------------
-# Tab 1: EDA
+# Tab 7: Model Playground
 # -------------------------
-with tabs[0]:
-    st.header("🔍 Exploratory Data Analysis")
+with tabs[6]:
+    st.header("🛠 Model Playground")
     df = load_data()
-    st.write("### נתונים ראשוניים")
-    st.dataframe(df.head())
+    X = df.drop("status", axis=1)
+    y = df["status"]
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
-    # Export options
-    st.download_button("⬇️ Download Data (CSV)", df.to_csv(index=False).encode("utf-8"),
-                       "eda_data.csv", "text/csv")
+    model_choice = st.selectbox("בחר מודל:", ["Random Forest", "XGBoost", "Logistic Regression", "LightGBM"])
 
-    with io.BytesIO() as buffer:
-        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-            df.to_excel(writer, index=False, sheet_name="EDA")
-        st.download_button("⬇️ Download Data (Excel)", buffer.getvalue(),
-                           "eda_data.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    params = {}
+    if model_choice == "Random Forest":
+        params["n_estimators"] = st.slider("n_estimators", 50, 500, 200, 50)
+        params["max_depth"] = st.slider("max_depth", 2, 20, 5)
+        model = RandomForestClassifier(**params, random_state=42)
 
-    st.write("### גרפים וניתוחים")
-    if os.path.exists(ASSETS_DIR):
-        image_files = sorted([f for f in os.listdir(ASSETS_DIR) if f.endswith(".png")])
-        if image_files:
-            for i in range(0, len(image_files), 2):
-                cols = st.columns(2)
-                for j in range(2):
-                    if i+j < len(image_files):
-                        img = image_files[i+j]
-                        cols[j].image(os.path.join(ASSETS_DIR, img), caption=img)
-        else:
-            st.info("⚠️ לא נמצאו גרפים בתיקיית assets.")
-    else:
-        st.error("❌ תיקיית assets לא נמצאה.")
+    elif model_choice == "XGBoost":
+        params["learning_rate"] = st.slider("learning_rate", 0.01, 0.3, 0.1)
+        params["n_estimators"] = st.slider("n_estimators", 50, 500, 200, 50)
+        model = XGBClassifier(use_label_encoder=False, eval_metric="logloss", random_state=42, **params)
+
+    elif model_choice == "Logistic Regression":
+        params["C"] = st.slider("C (inverse regularization)", 0.01, 5.0, 1.0)
+        model = LogisticRegression(max_iter=500, **params)
+
+    elif model_choice == "LightGBM":
+        params["n_estimators"] = st.slider("n_estimators", 50, 500, 200, 50)
+        params["learning_rate"] = st.slider("learning_rate", 0.01, 0.3, 0.1)
+        model = LGBMClassifier(random_state=42, **params)
+
+    if st.button("🚀 Train Model"):
+        pipe = Pipeline([("scaler", StandardScaler()), ("clf", model)])
+        pipe.fit(X_train, y_train)
+        y_pred = pipe.predict(X_test)
+        y_prob = pipe.predict_proba(X_test)[:, 1]
+
+        results = {
+            "accuracy": accuracy_score(y_test, y_pred),
+            "precision": precision_score(y_test, y_pred),
+            "recall": recall_score(y_test, y_pred),
+            "f1": f1_score(y_test, y_pred),
+            "roc_auc": roc_auc_score(y_test, y_prob)
+        }
+
+        st.subheader("📊 Results")
+        st.write(pd.DataFrame([results]))
+
+        # Confusion Matrix
+        cm = confusion_matrix(y_test, y_pred)
+        fig, ax = plt.subplots()
+        RocCurveDisplay.from_predictions(y_test, y_prob, ax=ax)
+        st.pyplot(fig)
+
+        # Export results
+        res_df = pd.DataFrame([{"Model": model_choice, **params, **results}])
+        st.download_button("⬇️ Save Results (CSV)", res_df.to_csv(index=False).encode("utf-8"),
+                           "playground_results.csv", "text/csv")
+
+        with io.BytesIO() as buffer:
+            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                res_df.to_excel(writer, index=False, sheet_name="Playground")
+            st.download_button("⬇️ Save Results (Excel)", buffer.getvalue(),
+                               "playground_results.xlsx",
+                               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # -------------------------
-# Tab 2: Model Results
+# Tab 8: Model Comparison Lab
 # -------------------------
-with tabs[1]:
-    st.header("🤖 Model Results")
+with tabs[7]:
+    st.header("⚖️ Model Comparison Lab")
     leaderboard = load_leaderboard()
+    df = load_data()
+    X = df.drop("status", axis=1)
+    y = df["status"]
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
     if leaderboard:
-        lb_df = pd.DataFrame({
-            model: scores["test"] for model, scores in leaderboard.items()
-        }).T.reset_index().rename(columns={"index": "Model"})
+        models_available = list(leaderboard.keys())
+        selected = st.multiselect("בחר מודלים להשוואה", models_available, default=models_available[:2])
 
-        # Rank by ROC-AUC
-        lb_df = lb_df.sort_values(by="roc_auc", ascending=False).reset_index(drop=True)
-        lb_df.index = lb_df.index + 1
-        lb_df.insert(0, "Rank", lb_df.index)
+        if st.button("🔍 Compare"):
+            comp_results = []
+            fig, ax = plt.subplots()
 
-        # Highlight best model
-        best_model = lb_df.iloc[0]["Model"]
-        lb_df.loc[lb_df["Model"] == best_model, "Model"] = "🏆 " + best_model
+            for m in selected:
+                try:
+                    model_file = os.path.join(MODELS_DIR, f"{m.replace(' ', '_')}.joblib")
+                    if os.path.exists(model_file):
+                        mdl = joblib.load(model_file)
+                    else:
+                        mdl = load_model()  # fallback to best_model
 
-        st.write("### Leaderboard – Model Comparison")
-        st.dataframe(
-            lb_df.style.highlight_max(
-                axis=0, subset=["accuracy","precision","recall","f1","roc_auc"], color="lightgreen"
-            )
-        )
+                    y_pred = mdl.predict(X_test)
+                    y_prob = mdl.predict_proba(X_test)[:, 1]
 
-        # Export leaderboard
-        st.download_button("⬇️ Download Leaderboard (CSV)", lb_df.to_csv(index=False).encode("utf-8"),
-                           "leaderboard.csv", "text/csv")
-    else:
-        st.warning("⚠️ No leaderboard found. Run pipeline first.")
+                    comp_results.append({
+                        "Model": m,
+                        "Accuracy": accuracy_score(y_test, y_pred),
+                        "Precision": precision_score(y_test, y_pred),
+                        "Recall": recall_score(y_test, y_pred),
+                        "F1": f1_score(y_test, y_pred),
+                        "ROC_AUC": roc_auc_score(y_test, y_prob)
+                    })
 
-    for plot in ["roc_curve.png", "pr_curve.png", "learning_curve.png", "confusion_matrix.png"]:
-        path = os.path.join(ASSETS_DIR, plot)
-        if os.path.exists(path):
-            st.image(path, caption=plot)
+                    RocCurveDisplay.from_predictions(y_test, y_prob, name=m, ax=ax)
+                except Exception as e:
+                    st.error(f"Model {m} failed: {e}")
 
-# -------------------------
-# Tab 3: Prediction
-# -------------------------
-with tabs[2]:
-    st.header("🩺 Prediction")
-    model = load_model()
-    df = load_data()
+            if comp_results:
+                comp_df = pd.DataFrame(comp_results).sort_values(by="ROC_AUC", ascending=False)
+                st.subheader("📊 Comparison Results")
+                st.dataframe(comp_df)
 
-    if model:
-        option = st.radio("Choose input method:", ["Manual Entry", "Upload CSV"])
+                st.subheader("📈 ROC Curves")
+                st.pyplot(fig)
 
-        if option == "Manual Entry":
-            inputs = {col: st.number_input(col, float(df[col].min()), float(df[col].max()), float(df[col].mean()))
-                      for col in df.drop("status", axis=1).columns}
-            if st.button("Predict"):
-                X_new = pd.DataFrame([inputs])
-                prob = model.predict_proba(X_new)[0, 1]
-                label = "Parkinson’s" if prob > 0.5 else "Healthy"
-
-                if prob < 0.3:
-                    risk = "🟢 Low Risk"
-                elif prob < 0.7:
-                    risk = "🟡 Medium Risk"
-                else:
-                    risk = "🔴 High Risk"
-
-                st.write(f"Prediction: **{label}** (prob={prob:.2f}) {risk}")
-                st.progress(int(prob * 100))
-
-        else:
-            file = st.file_uploader("Upload CSV", type=["csv"])
-            if file:
-                new_df = pd.read_csv(file)
-                preds = model.predict(new_df)
-                probs = model.predict_proba(new_df)[:, 1]
-
-                results = new_df.copy()
-                results["prediction"] = preds
-                results["probability"] = probs
-                results["risk_label"] = ["🟢 Low" if p < 0.3 else "🟡 Medium" if p < 0.7 else "🔴 High" for p in probs]
-
-                st.dataframe(results)
-
-                # Export results
-                st.download_button("⬇️ Download Predictions (CSV)",
-                                   data=results.to_csv(index=False).encode("utf-8"),
-                                   file_name="predictions.csv",
-                                   mime="text/csv")
+                # Export
+                st.download_button("⬇️ Save Comparison (CSV)", comp_df.to_csv(index=False).encode("utf-8"),
+                                   "comparison_results.csv", "text/csv")
 
                 with io.BytesIO() as buffer:
-                    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-                        results.to_excel(writer, index=False, sheet_name="Predictions")
-                    st.download_button("⬇️ Download Predictions (Excel)", buffer.getvalue(),
-                                       "predictions.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-# -------------------------
-# Tab 4: Retrain
-# -------------------------
-with tabs[3]:
-    st.header("🔄 Retrain Models")
-    uploaded = st.file_uploader("Upload new dataset (CSV)", type=["csv"])
-    if uploaded:
-        new_df = pd.read_csv(uploaded)
-        new_df.to_csv(os.path.join(DATA_DIR, "parkinsons.csv"), index=False)
-        st.success("Dataset updated! Please rerun model_pipeline.py manually to retrain.")
-
-# -------------------------
-# Tab 5: Explainability
-# -------------------------
-with tabs[4]:
-    st.header("🧾 Explainability")
-    shap_path = os.path.join(ASSETS_DIR, "shap_summary.png")
-    if os.path.exists(shap_path):
-        st.image(shap_path, caption="SHAP Summary Plot")
+                    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                        comp_df.to_excel(writer, index=False, sheet_name="Comparison")
+                    st.download_button("⬇️ Save Comparison (Excel)", buffer.getvalue(),
+                                       "comparison_results.xlsx",
+                                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     else:
-        st.info("No SHAP plot available yet. Run pipeline first.")
-
-# -------------------------
-# Tab 6: Training Log
-# -------------------------
-with tabs[5]:
-    st.header("📜 Training Log")
-    log_path = os.path.join(ASSETS_DIR, "training_log.csv")
-    if os.path.exists(log_path):
-        log_df = pd.read_csv(log_path)
-        st.dataframe(log_df)
-
-        st.download_button("⬇️ Download Log (CSV)", log_df.to_csv(index=False).encode("utf-8"),
-                           "training_log.csv", "text/csv")
-    else:
-        st.info("No training log available yet.")
+        st.warning("⚠️ No leaderboard found. Run pipeline first.")
