@@ -117,6 +117,68 @@ with open(os.path.join(ASSETS_DIR,"leaderboard.json"), "w") as f:
 # ============================
 # 6. Plots
 # ============================
+# ============================
+# EDA - Exploratory Data Analysis
+# ============================
+
+# 1. Target distribution
+plt.figure(figsize=(5,4))
+sns.countplot(x="status", data=df, palette="Set2")
+plt.title("Target Distribution (0=Healthy, 1=Parkinson’s)")
+plt.savefig(os.path.join(ASSETS_DIR,"target_distribution.png"))
+plt.close()
+
+# 2. Histograms לכל פיצ’ר
+for col in X.columns:
+    plt.figure(figsize=(5,4))
+    sns.histplot(data=df, x=col, hue="status", kde=True, element="step")
+    plt.title(f"Histogram - {col}")
+    plt.savefig(os.path.join(ASSETS_DIR,f"hist_{col}.png"))
+    plt.close()
+
+# 3. Boxplots לכל פיצ’ר
+for col in X.columns:
+    plt.figure(figsize=(5,4))
+    sns.boxplot(x="status", y=col, data=df, palette="Set3")
+    plt.title(f"Boxplot - {col} by Status")
+    plt.savefig(os.path.join(ASSETS_DIR,f"box_{col}.png"))
+    plt.close()
+
+# 4. Correlation heatmap
+plt.figure(figsize=(12,10))
+sns.heatmap(df.corr(), cmap="coolwarm", center=0)
+plt.title("Feature Correlation Heatmap")
+plt.savefig(os.path.join(ASSETS_DIR,"correlation_heatmap.png"))
+plt.close()
+
+# 5. Pairplot (רק חלק מהפיצ’רים כדי לא לקרוס)
+sample_cols = df.columns[:5].tolist() + ["status"]
+sns.pairplot(df[sample_cols], hue="status", diag_kind="kde")
+plt.savefig(os.path.join(ASSETS_DIR,"pairplot.png"))
+plt.close()
+
+# 6. PCA Projection
+from sklearn.decomposition import PCA
+pca = PCA(n_components=2)
+pca_result = pca.fit_transform(StandardScaler().fit_transform(X))
+df_pca = pd.DataFrame({"pca1": pca_result[:,0], "pca2": pca_result[:,1], "status": y})
+plt.figure(figsize=(6,5))
+sns.scatterplot(x="pca1", y="pca2", hue="status", data=df_pca, palette="Set1")
+plt.title("PCA Projection")
+plt.savefig(os.path.join(ASSETS_DIR,"pca.png"))
+plt.close()
+
+# 7. t-SNE Projection
+from sklearn.manifold import TSNE
+tsne = TSNE(n_components=2, random_state=42, perplexity=30, n_iter=500)
+tsne_result = tsne.fit_transform(StandardScaler().fit_transform(X))
+df_tsne = pd.DataFrame({"tsne1": tsne_result[:,0], "tsne2": tsne_result[:,1], "status": y})
+plt.figure(figsize=(6,5))
+sns.scatterplot(x="tsne1", y="tsne2", hue="status", data=df_tsne, palette="Set2")
+plt.title("t-SNE Projection")
+plt.savefig(os.path.join(ASSETS_DIR,"tsne.png"))
+plt.close()
+
 # ROC
 y_prob = best_model.predict_proba(X_test)[:,1]
 fpr, tpr, _ = roc_curve(y_test, y_prob)
