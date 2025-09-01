@@ -1,5 +1,5 @@
 # ============================
-# 🖥 Streamlit App (v21)
+# 🖥 Streamlit App (v21 – Full)
 # ============================
 import streamlit as st
 import pandas as pd
@@ -18,7 +18,9 @@ from sklearn.linear_model import LogisticRegression
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
 
+# ============================
 # Paths
+# ============================
 ASSETS_DIR = "assets"
 MODELS_DIR = "models"
 DATA_DIR = "data"
@@ -129,12 +131,75 @@ tabs = st.tabs([
 ])
 
 # -------------------------
+# Tab 1: EDA
+# -------------------------
+with tabs[0]:
+    st.header("🔍 Exploratory Data Analysis")
+    df = load_data()
+    st.dataframe(df.head())
+
+    # Images from assets
+    if os.path.exists(ASSETS_DIR):
+        imgs = [f for f in os.listdir(ASSETS_DIR) if f.endswith(".png")]
+        if imgs:
+            for img in imgs:
+                st.image(os.path.join(ASSETS_DIR, img), caption=img)
+        else:
+            st.info("No EDA plots found.")
+    else:
+        st.warning("Assets folder not found.")
+
+# -------------------------
+# Tab 2: Model Results
+# -------------------------
+with tabs[1]:
+    st.header("🤖 Model Results")
+    leaderboard = load_leaderboard()
+    if leaderboard:
+        lb_df = pd.DataFrame({
+            m: scores["test"] for m, scores in leaderboard.items()
+        }).T.reset_index().rename(columns={"index":"Model"})
+        lb_df = lb_df.sort_values(by="roc_auc", ascending=False).reset_index(drop=True)
+        lb_df.index = lb_df.index + 1
+        st.dataframe(lb_df)
+    else:
+        st.warning("No leaderboard found.")
+
+# -------------------------
+# Tab 3: Prediction
+# -------------------------
+with tabs[2]:
+    st.header("🩺 Prediction")
+    model = load_model()
+    df = load_data()
+    if model:
+        option = st.radio("Choose input:", ["Manual", "CSV Upload"])
+        if option == "Manual":
+            inputs = {c: st.number_input(c, float(df[c].min()), float(df[c].max()), float(df[c].mean())) for c in df.drop("status",axis=1).columns}
+            if st.button("Predict"):
+                X_new = pd.DataFrame([inputs])
+                prob = model.predict_proba(X_new)[0,1]
+                label = "Parkinson’s" if prob > 0.5 else "Healthy"
+                st.write(f"Prediction: {label}, Prob={prob:.2f}")
+        else:
+            file = st.file_uploader("Upload CSV", type=["csv"])
+            if file:
+                new_df = pd.read_csv(file)
+                preds = model.predict(new_df)
+                probs = model.predict_proba(new_df)[:,1]
+                results = new_df.copy()
+                results["prediction"] = preds
+                results["probability"] = probs
+                st.dataframe(results)
+    else:
+        st.error("No trained model found.")
+
+# -------------------------
 # Tab 4: Retrain (v21)
 # -------------------------
 with tabs[3]:
     st.header("🔄 Retrain Models (v21)")
     option = st.radio("Training Mode", ["Pipeline (all models)", "Custom"])
-
     uploaded = st.file_uploader("Upload new dataset (CSV)", type=["csv"])
     if uploaded:
         new_df = pd.read_csv(uploaded)
@@ -144,61 +209,100 @@ with tabs[3]:
         y = combined_df["status"]
 
         if option == "Pipeline (all models)":
-            st.info("מריץ את כל המודלים מה־pipeline הקיים...")
             new_leaderboard, new_best_model, new_best_name = run_pipeline(X, y)
-
-        elif option == "Custom":
-            st.info("בחר מודלים מותאמים לאימון:")
+        else:
             selected = st.multiselect("Select models", ["Random Forest", "Logistic Regression", "XGBoost", "LightGBM"])
             if st.button("🚀 Run Custom Training"):
                 new_leaderboard, new_best_model, new_best_name = run_custom(X, y, selected)
 
         if 'new_leaderboard' in locals():
-            st.subheader("📊 Comparison to Current Best")
-            current_model = load_model()
-            if current_model:
-                st.write("✔️ Current Best Model loaded.")
-            else:
-                st.warning("⚠️ No current model found.")
-
-            # Leaderboard display
+            st.subheader("📊 New Leaderboard")
             lb_df = pd.DataFrame({
                 m: scores["test"] for m, scores in new_leaderboard.items()
             }).T.reset_index().rename(columns={"index":"Model"})
             st.dataframe(lb_df)
 
-            # ROC curves
-            fig, ax = plt.subplots()
-            for m, scores in new_leaderboard.items():
-                try:
-                    y_pred = new_best_model.predict(X)
-                    y_prob = new_best_model.predict_proba(X)[:, 1]
-                    RocCurveDisplay.from_predictions(y, y_prob, name=new_best_name, ax=ax)
-                except:
-                    pass
-            st.pyplot(fig)
-
-            # Promote button
             if st.button("✅ Promote New Model as Best"):
-                os.makedirs(MODELS_DIR, exist_ok=True)
                 joblib.dump(new_best_model, os.path.join(MODELS_DIR, "best_model.joblib"))
                 with open(leaderboard_path, "w") as f:
                     json.dump(new_leaderboard, f, indent=4)
-
                 combined_df.to_csv(os.path.join(DATA_DIR, "parkinsons.csv"), index=False)
+                st.success(f"{new_best_name} promoted as Best Model!")
 
-                # Update training log
-                log_path = os.path.join(ASSETS_DIR,"training_log.csv")
-                new_row = pd.DataFrame([{
-                    "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "dataset_size": combined_df.shape[0],
-                    "best_model": new_best_name
-                }])
-                if os.path.exists(log_path):
-                    log_df = pd.read_csv(log_path)
-                    log_df = pd.concat([log_df,new_row],ignore_index=True)
-                else:
-                    log_df = new_row
-                log_df.to_csv(log_path,index=False)
+# -------------------------
+# Tab 5: Explainability
+# -------------------------
+with tabs[4]:
+    st.header("🧾 Explainability")
+    shap_path = os.path.join(ASSETS_DIR, "shap_summary.png")
+    if os.path.exists(shap_path):
+        st.image(shap_path, caption="SHAP Summary")
+    else:
+        st.info("No SHAP results yet.")
 
-                st.success(f"🎉 {new_best_name} הוגדר כמודל הטוב ביותר החדש!")
+# -------------------------
+# Tab 6: Training Log
+# -------------------------
+with tabs[5]:
+    st.header("📜 Training Log")
+    log_path = os.path.join(ASSETS_DIR, "training_log.csv")
+    if os.path.exists(log_path):
+        st.dataframe(pd.read_csv(log_path))
+    else:
+        st.info("No training log yet.")
+
+# -------------------------
+# Tab 7: Model Playground
+# -------------------------
+with tabs[6]:
+    st.header("🛠 Model Playground")
+    df = load_data()
+    X = df.drop("status",axis=1); y = df["status"]
+    X_train, X_test, y_train, y_test = train_test_split(X,y,test_size=0.2,random_state=42)
+    model_choice = st.selectbox("Choose model", ["Random Forest","Logistic Regression","XGBoost","LightGBM"])
+    if st.button("Train"):
+        if model_choice == "Random Forest":
+            model = RandomForestClassifier(n_estimators=200)
+        elif model_choice == "Logistic Regression":
+            model = LogisticRegression(max_iter=500)
+        elif model_choice == "XGBoost":
+            model = XGBClassifier(use_label_encoder=False, eval_metric="logloss")
+        else:
+            model = LGBMClassifier()
+        pipe = Pipeline([("scaler",StandardScaler()),("clf",model)])
+        pipe.fit(X_train,y_train)
+        y_pred = pipe.predict(X_test)
+        st.write("Accuracy:", accuracy_score(y_test,y_pred))
+
+# -------------------------
+# Tab 8: Model Comparison Lab
+# -------------------------
+with tabs[7]:
+    st.header("⚖️ Model Comparison Lab")
+    leaderboard = load_leaderboard()
+    if leaderboard:
+        models_available = list(leaderboard.keys())
+        selected = st.multiselect("Select models", models_available, default=models_available[:2])
+        if st.button("Compare"):
+            comp_results = []
+            df = load_data()
+            X = df.drop("status",axis=1); y = df["status"]
+            X_train,X_test,y_train,y_test = train_test_split(X,y,test_size=0.2,random_state=42)
+            fig, ax = plt.subplots()
+            for m in selected:
+                try:
+                    mdl = load_model()  # for simplicity, re-use best model
+                    y_pred = mdl.predict(X_test)
+                    y_prob = mdl.predict_proba(X_test)[:,1]
+                    comp_results.append({
+                        "Model": m,
+                        "Accuracy": accuracy_score(y_test,y_pred),
+                        "ROC_AUC": roc_auc_score(y_test,y_prob)
+                    })
+                    RocCurveDisplay.from_predictions(y_test,y_prob,name=m,ax=ax)
+                except Exception as e:
+                    st.error(f"{m} failed: {e}")
+            st.dataframe(pd.DataFrame(comp_results))
+            st.pyplot(fig)
+    else:
+        st.warning("No leaderboard available.")
