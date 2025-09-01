@@ -1,5 +1,5 @@
 # ============================
-# 🖥 Streamlit App (v23 – Full)
+# 🖥 Streamlit App (v19_plus_full)
 # ============================
 import streamlit as st
 import pandas as pd
@@ -52,7 +52,7 @@ def load_model():
     return None
 
 # ============================
-# Retrain Helpers
+# Retrain Helper
 # ============================
 def run_pipeline(X, y):
     models = {
@@ -85,11 +85,11 @@ def run_pipeline(X, y):
 # Streamlit App
 # ============================
 st.set_page_config(page_title="Parkinson’s Prediction", layout="wide")
-st.title("🧠 Parkinson’s Prediction Project (v23)")
+st.title("🧠 Parkinson’s Prediction Project (v19_plus_full)")
 
 tabs = st.tabs([
     "EDA", "Model Results", "Prediction", "Retrain",
-    "Explainability", "Training Log", "Playground", "Comparison Lab"
+    "Explainability", "Training Log", "Playground"
 ])
 
 # -------------------------
@@ -126,7 +126,7 @@ with tabs[0]:
         sns.boxplot(x="status", y=col, data=df, ax=axes[i//3, i%3])
     st.pyplot(fig)
 
-    # Feature Importance (if exists)
+    # Feature Importance (אם קיים asset)
     feat_path = os.path.join(ASSETS_DIR,"feature_importance.png")
     if os.path.exists(feat_path):
         st.subheader("Feature Importance")
@@ -197,7 +197,7 @@ with tabs[2]:
         st.error("No trained model found.")
 
 # -------------------------
-# Tab 4: Retrain
+# Tab 4: Retrain (דינאמי)
 # -------------------------
 with tabs[3]:
     st.header("🔄 Retrain Models")
@@ -282,27 +282,3 @@ with tabs[6]:
         y_pred=pipe.predict(X_test); y_prob=pipe.predict_proba(X_test)[:,1]
         st.write("Accuracy:",accuracy_score(y_test,y_pred))
         fig,ax=plt.subplots(); RocCurveDisplay.from_predictions(y_test,y_prob,ax=ax); st.pyplot(fig)
-
-# -------------------------
-# Tab 8: Comparison Lab
-# -------------------------
-with tabs[7]:
-    st.header("⚖️ Model Comparison Lab")
-    leaderboard=load_leaderboard()
-    if leaderboard:
-        models=list(leaderboard.keys())
-        selected=st.multiselect("Select models",models,default=models[:2])
-        if st.button("Compare"):
-            df=load_data(); X=df.drop("status",axis=1); y=df["status"]
-            X_train,X_test,y_train,y_test=train_test_split(X,y,test_size=0.2,random_state=42)
-            fig,ax=plt.subplots(); comp=[]
-            for m in selected:
-                mdl=load_model()
-                y_pred=mdl.predict(X_test); y_prob=mdl.predict_proba(X_test)[:,1]
-                comp.append({"Model":m,"Accuracy":accuracy_score(y_test,y_pred),
-                             "ROC_AUC":roc_auc_score(y_test,y_prob)})
-                RocCurveDisplay.from_predictions(y_test,y_prob,name=m,ax=ax)
-            st.dataframe(pd.DataFrame(comp))
-            st.pyplot(fig)
-    else:
-        st.warning("No leaderboard yet.")
