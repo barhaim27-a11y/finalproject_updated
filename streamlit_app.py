@@ -1,10 +1,10 @@
 # ============================
-# 🖥 Streamlit App (v18)
+# 🖥 Streamlit App (v19)
 # ============================
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os, json, joblib
+import os, json, joblib, io
 
 # Paths
 ASSETS_DIR = "assets"
@@ -20,8 +20,7 @@ model_path = os.path.join(MODELS_DIR, "best_model.joblib")
 # ============================
 @st.cache_data
 def load_data():
-    df = pd.read_csv(os.path.join(DATA_DIR, "parkinsons.csv"))
-    return df
+    return pd.read_csv(os.path.join(DATA_DIR, "parkinsons.csv"))
 
 def load_metrics():
     if os.path.exists(metrics_path):
@@ -44,7 +43,7 @@ def load_model():
 # Streamlit App
 # ============================
 st.set_page_config(page_title="Parkinson’s Prediction", layout="wide")
-st.title("🧠 Parkinson’s Prediction Project (v18)")
+st.title("🧠 Parkinson’s Prediction Project (v19)")
 
 tabs = st.tabs(["EDA", "Model Results", "Prediction", "Retrain", "Explainability", "Training Log"])
 
@@ -57,39 +56,64 @@ with tabs[0]:
     st.write("### נתונים ראשוניים")
     st.dataframe(df.head())
 
-    st.write("### גרפים וניתוחים")
+    # Export options
+    st.download_button("⬇️ Download Data (CSV)", df.to_csv(index=False).encode("utf-8"),
+                       "eda_data.csv", "text/csv")
 
-    # מציג את כל התמונות מתיקיית assets
+    with io.BytesIO() as buffer:
+        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+            df.to_excel(writer, index=False, sheet_name="EDA")
+        st.download_button("⬇️ Download Data (Excel)", buffer.getvalue(),
+                           "eda_data.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    st.write("### גרפים וניתוחים")
     if os.path.exists(ASSETS_DIR):
-        image_files = [f for f in os.listdir(ASSETS_DIR) if f.endswith(".png")]
+        image_files = sorted([f for f in os.listdir(ASSETS_DIR) if f.endswith(".png")])
         if image_files:
-            for img in sorted(image_files):
-                st.image(os.path.join(ASSETS_DIR, img), caption=img)
+            for i in range(0, len(image_files), 2):
+                cols = st.columns(2)
+                for j in range(2):
+                    if i+j < len(image_files):
+                        img = image_files[i+j]
+                        cols[j].image(os.path.join(ASSETS_DIR, img), caption=img)
         else:
-            st.info("⚠️ לא נמצאו גרפים בתיקיית assets. תריץ את model_pipeline.py כדי לייצר אותם.")
+            st.info("⚠️ לא נמצאו גרפים בתיקיית assets.")
     else:
-        st.error("❌ תיקיית assets לא נמצאה. ודא שהרצת את הקוד בקולאב קודם.")
+        st.error("❌ תיקיית assets לא נמצאה.")
 
 # -------------------------
 # Tab 2: Model Results
 # -------------------------
 with tabs[1]:
     st.header("🤖 Model Results")
-    metrics = load_metrics()
     leaderboard = load_leaderboard()
 
-    if metrics and "test" in metrics:
-        cols = st.columns(5)
-        cols[0].metric("Accuracy", f"{metrics['test']['accuracy']:.2f}")
-        cols[1].metric("Precision", f"{metrics['test']['precision']:.2f}")
-        cols[2].metric("Recall", f"{metrics['test']['recall']:.2f}")
-        cols[3].metric("F1", f"{metrics['test']['f1']:.2f}")
-        cols[4].metric("ROC-AUC", f"{metrics['test']['roc_auc']:.2f}")
-
     if leaderboard:
-        st.write("### Leaderboard")
-        lb_df = pd.DataFrame({k: v['test'] for k, v in leaderboard.items()}).T
-        st.dataframe(lb_df)
+        lb_df = pd.DataFrame({
+            model: scores["test"] for model, scores in leaderboard.items()
+        }).T.reset_index().rename(columns={"index": "Model"})
+
+        # Rank by ROC-AUC
+        lb_df = lb_df.sort_values(by="roc_auc", ascending=False).reset_index(drop=True)
+        lb_df.index = lb_df.index + 1
+        lb_df.insert(0, "Rank", lb_df.index)
+
+        # Highlight best model
+        best_model = lb_df.iloc[0]["Model"]
+        lb_df.loc[lb_df["Model"] == best_model, "Model"] = "🏆 " + best_model
+
+        st.write("### Leaderboard – Model Comparison")
+        st.dataframe(
+            lb_df.style.highlight_max(
+                axis=0, subset=["accuracy","precision","recall","f1","roc_auc"], color="lightgreen"
+            )
+        )
+
+        # Export leaderboard
+        st.download_button("⬇️ Download Leaderboard (CSV)", lb_df.to_csv(index=False).encode("utf-8"),
+                           "leaderboard.csv", "text/csv")
+    else:
+        st.warning("⚠️ No leaderboard found. Run pipeline first.")
 
     for plot in ["roc_curve.png", "pr_curve.png", "learning_curve.png", "confusion_matrix.png"]:
         path = os.path.join(ASSETS_DIR, plot)
@@ -115,7 +139,6 @@ with tabs[2]:
                 prob = model.predict_proba(X_new)[0, 1]
                 label = "Parkinson’s" if prob > 0.5 else "Healthy"
 
-                # Risk tag
                 if prob < 0.3:
                     risk = "🟢 Low Risk"
                 elif prob < 0.7:
@@ -140,11 +163,17 @@ with tabs[2]:
 
                 st.dataframe(results)
 
-                # Export
+                # Export results
                 st.download_button("⬇️ Download Predictions (CSV)",
                                    data=results.to_csv(index=False).encode("utf-8"),
                                    file_name="predictions.csv",
                                    mime="text/csv")
+
+                with io.BytesIO() as buffer:
+                    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+                        results.to_excel(writer, index=False, sheet_name="Predictions")
+                    st.download_button("⬇️ Download Predictions (Excel)", buffer.getvalue(),
+                                       "predictions.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # -------------------------
 # Tab 4: Retrain
@@ -175,6 +204,10 @@ with tabs[5]:
     st.header("📜 Training Log")
     log_path = os.path.join(ASSETS_DIR, "training_log.csv")
     if os.path.exists(log_path):
-        st.dataframe(pd.read_csv(log_path))
+        log_df = pd.read_csv(log_path)
+        st.dataframe(log_df)
+
+        st.download_button("⬇️ Download Log (CSV)", log_df.to_csv(index=False).encode("utf-8"),
+                           "training_log.csv", "text/csv")
     else:
         st.info("No training log available yet.")
