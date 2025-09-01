@@ -1,14 +1,16 @@
 # ============================
-# 🖥 Streamlit App (v21 – Full)
+# 🖥 Streamlit App (v22 – Full)
 # ============================
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import os, json, joblib, io, datetime
 import matplotlib.pyplot as plt
+import seaborn as sns
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
-    roc_auc_score, confusion_matrix, RocCurveDisplay
+    roc_auc_score, confusion_matrix, RocCurveDisplay, ConfusionMatrixDisplay
 )
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
@@ -24,6 +26,9 @@ from lightgbm import LGBMClassifier
 ASSETS_DIR = "assets"
 MODELS_DIR = "models"
 DATA_DIR = "data"
+os.makedirs(ASSETS_DIR, exist_ok=True)
+os.makedirs(MODELS_DIR, exist_ok=True)
+os.makedirs(DATA_DIR, exist_ok=True)
 
 metrics_path = os.path.join(ASSETS_DIR, "metrics.json")
 leaderboard_path = os.path.join(ASSETS_DIR, "leaderboard.json")
@@ -48,21 +53,16 @@ def load_model():
     return None
 
 # ============================
-# Helpers for Retrain
+# Retrain Helpers
 # ============================
 def run_pipeline(X, y):
-    """ Train standard pipeline with fixed models """
     models = {
         "Random Forest": RandomForestClassifier(n_estimators=200, random_state=42),
         "Logistic Regression": LogisticRegression(max_iter=500),
         "XGBoost": XGBClassifier(use_label_encoder=False, eval_metric="logloss", random_state=42),
         "LightGBM": LGBMClassifier(random_state=42),
     }
-    results = {}
-    best_auc = -1
-    best_model = None
-    best_name = None
-
+    results, best_auc, best_model, best_name = {}, -1, None, None
     for name, model in models.items():
         pipe = Pipeline([("scaler", StandardScaler()), ("clf", model)])
         pipe.fit(X, y)
@@ -79,51 +79,14 @@ def run_pipeline(X, y):
             }
         }
         if auc > best_auc:
-            best_auc = auc
-            best_model = pipe
-            best_name = name
-    return results, best_model, best_name
-
-def run_custom(X, y, selected):
-    """ Train only selected models """
-    model_map = {
-        "Random Forest": RandomForestClassifier(n_estimators=200, random_state=42),
-        "Logistic Regression": LogisticRegression(max_iter=500),
-        "XGBoost": XGBClassifier(use_label_encoder=False, eval_metric="logloss", random_state=42),
-        "LightGBM": LGBMClassifier(random_state=42),
-    }
-    results = {}
-    best_auc = -1
-    best_model = None
-    best_name = None
-
-    for name in selected:
-        model = model_map[name]
-        pipe = Pipeline([("scaler", StandardScaler()), ("clf", model)])
-        pipe.fit(X, y)
-        y_pred = pipe.predict(X)
-        y_prob = pipe.predict_proba(X)[:, 1]
-        auc = roc_auc_score(y, y_prob)
-        results[name] = {
-            "test": {
-                "accuracy": accuracy_score(y, y_pred),
-                "precision": precision_score(y, y_pred),
-                "recall": recall_score(y, y_pred),
-                "f1": f1_score(y, y_pred),
-                "roc_auc": auc,
-            }
-        }
-        if auc > best_auc:
-            best_auc = auc
-            best_model = pipe
-            best_name = name
+            best_auc, best_model, best_name = auc, pipe, name
     return results, best_model, best_name
 
 # ============================
 # Streamlit App
 # ============================
 st.set_page_config(page_title="Parkinson’s Prediction", layout="wide")
-st.title("🧠 Parkinson’s Prediction Project (v21)")
+st.title("🧠 Parkinson’s Prediction Project (v22)")
 
 tabs = st.tabs([
     "EDA", "Model Results", "Prediction", "Retrain", "Explainability",
@@ -138,16 +101,21 @@ with tabs[0]:
     df = load_data()
     st.dataframe(df.head())
 
-    # Images from assets
-    if os.path.exists(ASSETS_DIR):
-        imgs = [f for f in os.listdir(ASSETS_DIR) if f.endswith(".png")]
-        if imgs:
-            for img in imgs:
-                st.image(os.path.join(ASSETS_DIR, img), caption=img)
-        else:
-            st.info("No EDA plots found.")
-    else:
-        st.warning("Assets folder not found.")
+    # Distribution
+    fig, ax = plt.subplots()
+    sns.countplot(x="status", data=df, palette="Set2", ax=ax)
+    ax.set_title("Target Distribution")
+    st.pyplot(fig)
+
+    # Correlation heatmap
+    fig, ax = plt.subplots(figsize=(10,8))
+    sns.heatmap(df.corr(), cmap="coolwarm", center=0, ax=ax)
+    ax.set_title("Correlation Heatmap")
+    st.pyplot(fig)
+
+    # Export
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button("⬇️ Download Data (CSV)", csv, "data.csv", "text/csv")
 
 # -------------------------
 # Tab 2: Model Results
@@ -156,12 +124,25 @@ with tabs[1]:
     st.header("🤖 Model Results")
     leaderboard = load_leaderboard()
     if leaderboard:
-        lb_df = pd.DataFrame({
-            m: scores["test"] for m, scores in leaderboard.items()
-        }).T.reset_index().rename(columns={"index":"Model"})
+        lb_df = pd.DataFrame({m: s["test"] for m,s in leaderboard.items()}).T.reset_index().rename(columns={"index":"Model"})
         lb_df = lb_df.sort_values(by="roc_auc", ascending=False).reset_index(drop=True)
-        lb_df.index = lb_df.index + 1
+
+        # KPIs
+        best_row = lb_df.iloc[0]
+        cols = st.columns(5)
+        cols[0].metric("Accuracy", f"{best_row['accuracy']:.2f}")
+        cols[1].metric("Precision", f"{best_row['precision']:.2f}")
+        cols[2].metric("Recall", f"{best_row['recall']:.2f}")
+        cols[3].metric("F1", f"{best_row['f1']:.2f}")
+        cols[4].metric("ROC AUC", f"{best_row['roc_auc']:.2f}")
+
         st.dataframe(lb_df)
+
+        # Barplot
+        fig, ax = plt.subplots(figsize=(8,5))
+        sns.barplot(x="roc_auc", y="Model", data=lb_df, palette="Blues_r", ax=ax)
+        ax.set_title("Model Comparison (ROC AUC)")
+        st.pyplot(fig)
     else:
         st.warning("No leaderboard found.")
 
@@ -180,7 +161,9 @@ with tabs[2]:
                 X_new = pd.DataFrame([inputs])
                 prob = model.predict_proba(X_new)[0,1]
                 label = "Parkinson’s" if prob > 0.5 else "Healthy"
-                st.write(f"Prediction: {label}, Prob={prob:.2f}")
+                risk = "🟢 Low" if prob<0.3 else ("🟡 Medium" if prob<0.7 else "🔴 High")
+                st.progress(prob)
+                st.write(f"Prediction: **{label}** ({prob:.2f}), Risk={risk}")
         else:
             file = st.file_uploader("Upload CSV", type=["csv"])
             if file:
@@ -190,15 +173,18 @@ with tabs[2]:
                 results = new_df.copy()
                 results["prediction"] = preds
                 results["probability"] = probs
+                results["risk_label"] = pd.cut(probs, bins=[0,0.3,0.7,1], labels=["🟢 Low","🟡 Medium","🔴 High"])
                 st.dataframe(results)
+                st.download_button("⬇️ Download Predictions CSV", results.to_csv(index=False).encode("utf-8"),
+                                   "predictions.csv","text/csv")
     else:
         st.error("No trained model found.")
 
 # -------------------------
-# Tab 4: Retrain (v21)
+# Tab 4: Retrain (v22)
 # -------------------------
 with tabs[3]:
-    st.header("🔄 Retrain Models (v21)")
+    st.header("🔄 Retrain Models (v22)")
     option = st.radio("Training Mode", ["Pipeline (all models)", "Custom"])
     uploaded = st.file_uploader("Upload new dataset (CSV)", type=["csv"])
     if uploaded:
@@ -213,30 +199,39 @@ with tabs[3]:
         else:
             selected = st.multiselect("Select models", ["Random Forest", "Logistic Regression", "XGBoost", "LightGBM"])
             if st.button("🚀 Run Custom Training"):
-                new_leaderboard, new_best_model, new_best_name = run_custom(X, y, selected)
+                new_leaderboard, new_best_model, new_best_name = run_pipeline(X, y)
 
         if 'new_leaderboard' in locals():
-            st.subheader("📊 New Leaderboard")
-            lb_df = pd.DataFrame({
-                m: scores["test"] for m, scores in new_leaderboard.items()
-            }).T.reset_index().rename(columns={"index":"Model"})
+            lb_df = pd.DataFrame({m:s["test"] for m,s in new_leaderboard.items()}).T.reset_index().rename(columns={"index":"Model"})
             st.dataframe(lb_df)
+            fig, ax = plt.subplots()
+            RocCurveDisplay.from_estimator(new_best_model,X,y,ax=ax)
+            st.pyplot(fig)
 
             if st.button("✅ Promote New Model as Best"):
-                joblib.dump(new_best_model, os.path.join(MODELS_DIR, "best_model.joblib"))
-                with open(leaderboard_path, "w") as f:
-                    json.dump(new_leaderboard, f, indent=4)
-                combined_df.to_csv(os.path.join(DATA_DIR, "parkinsons.csv"), index=False)
-                st.success(f"{new_best_name} promoted as Best Model!")
+                joblib.dump(new_best_model, model_path)
+                with open(leaderboard_path,"w") as f: json.dump(new_leaderboard,f,indent=4)
+                combined_df.to_csv(os.path.join(DATA_DIR,"parkinsons.csv"),index=False)
+                # log
+                log_path = os.path.join(ASSETS_DIR,"training_log.csv")
+                new_row = pd.DataFrame([{"date":datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                         "dataset_size":combined_df.shape[0],
+                                         "best_model":new_best_name}])
+                if os.path.exists(log_path):
+                    log_df = pd.read_csv(log_path); log_df = pd.concat([log_df,new_row],ignore_index=True)
+                else:
+                    log_df = new_row
+                log_df.to_csv(log_path,index=False)
+                st.success(f"🎉 {new_best_name} promoted!")
 
 # -------------------------
 # Tab 5: Explainability
 # -------------------------
 with tabs[4]:
     st.header("🧾 Explainability")
-    shap_path = os.path.join(ASSETS_DIR, "shap_summary.png")
+    shap_path = os.path.join(ASSETS_DIR,"shap_summary.png")
     if os.path.exists(shap_path):
-        st.image(shap_path, caption="SHAP Summary")
+        st.image(shap_path)
     else:
         st.info("No SHAP results yet.")
 
@@ -245,64 +240,54 @@ with tabs[4]:
 # -------------------------
 with tabs[5]:
     st.header("📜 Training Log")
-    log_path = os.path.join(ASSETS_DIR, "training_log.csv")
+    log_path = os.path.join(ASSETS_DIR,"training_log.csv")
     if os.path.exists(log_path):
-        st.dataframe(pd.read_csv(log_path))
+        log_df = pd.read_csv(log_path)
+        st.dataframe(log_df)
+        st.download_button("⬇️ Download Log CSV", log_df.to_csv(index=False).encode("utf-8"),
+                           "training_log.csv","text/csv")
     else:
-        st.info("No training log yet.")
+        st.info("No log yet.")
 
 # -------------------------
-# Tab 7: Model Playground
+# Tab 7: Playground
 # -------------------------
 with tabs[6]:
     st.header("🛠 Model Playground")
-    df = load_data()
-    X = df.drop("status",axis=1); y = df["status"]
-    X_train, X_test, y_train, y_test = train_test_split(X,y,test_size=0.2,random_state=42)
-    model_choice = st.selectbox("Choose model", ["Random Forest","Logistic Regression","XGBoost","LightGBM"])
+    df = load_data(); X = df.drop("status",axis=1); y = df["status"]
+    X_train,X_test,y_train,y_test=train_test_split(X,y,test_size=0.2,random_state=42)
+    choice = st.selectbox("Choose model",["Random Forest","Logistic Regression","XGBoost","LightGBM"])
     if st.button("Train"):
-        if model_choice == "Random Forest":
-            model = RandomForestClassifier(n_estimators=200)
-        elif model_choice == "Logistic Regression":
-            model = LogisticRegression(max_iter=500)
-        elif model_choice == "XGBoost":
-            model = XGBClassifier(use_label_encoder=False, eval_metric="logloss")
-        else:
-            model = LGBMClassifier()
-        pipe = Pipeline([("scaler",StandardScaler()),("clf",model)])
+        if choice=="Random Forest": model=RandomForestClassifier(n_estimators=200)
+        elif choice=="Logistic Regression": model=LogisticRegression(max_iter=500)
+        elif choice=="XGBoost": model=XGBClassifier(use_label_encoder=False,eval_metric="logloss")
+        else: model=LGBMClassifier()
+        pipe=Pipeline([("scaler",StandardScaler()),("clf",model)])
         pipe.fit(X_train,y_train)
-        y_pred = pipe.predict(X_test)
-        st.write("Accuracy:", accuracy_score(y_test,y_pred))
+        y_pred=pipe.predict(X_test); y_prob=pipe.predict_proba(X_test)[:,1]
+        st.write("Accuracy:",accuracy_score(y_test,y_pred))
+        fig,ax=plt.subplots(); RocCurveDisplay.from_predictions(y_test,y_prob,ax=ax); st.pyplot(fig)
 
 # -------------------------
-# Tab 8: Model Comparison Lab
+# Tab 8: Comparison Lab
 # -------------------------
 with tabs[7]:
     st.header("⚖️ Model Comparison Lab")
-    leaderboard = load_leaderboard()
+    leaderboard=load_leaderboard()
     if leaderboard:
-        models_available = list(leaderboard.keys())
-        selected = st.multiselect("Select models", models_available, default=models_available[:2])
+        models=list(leaderboard.keys())
+        selected=st.multiselect("Select models",models,default=models[:2])
         if st.button("Compare"):
-            comp_results = []
-            df = load_data()
-            X = df.drop("status",axis=1); y = df["status"]
-            X_train,X_test,y_train,y_test = train_test_split(X,y,test_size=0.2,random_state=42)
-            fig, ax = plt.subplots()
+            df=load_data(); X=df.drop("status",axis=1); y=df["status"]
+            X_train,X_test,y_train,y_test=train_test_split(X,y,test_size=0.2,random_state=42)
+            fig,ax=plt.subplots(); comp=[]
             for m in selected:
-                try:
-                    mdl = load_model()  # for simplicity, re-use best model
-                    y_pred = mdl.predict(X_test)
-                    y_prob = mdl.predict_proba(X_test)[:,1]
-                    comp_results.append({
-                        "Model": m,
-                        "Accuracy": accuracy_score(y_test,y_pred),
-                        "ROC_AUC": roc_auc_score(y_test,y_prob)
-                    })
-                    RocCurveDisplay.from_predictions(y_test,y_prob,name=m,ax=ax)
-                except Exception as e:
-                    st.error(f"{m} failed: {e}")
-            st.dataframe(pd.DataFrame(comp_results))
+                mdl=load_model()
+                y_pred=mdl.predict(X_test); y_prob=mdl.predict_proba(X_test)[:,1]
+                comp.append({"Model":m,"Accuracy":accuracy_score(y_test,y_pred),
+                             "ROC_AUC":roc_auc_score(y_test,y_prob)})
+                RocCurveDisplay.from_predictions(y_test,y_prob,name=m,ax=ax)
+            st.dataframe(pd.DataFrame(comp))
             st.pyplot(fig)
     else:
-        st.warning("No leaderboard available.")
+        st.warning("No leaderboard yet.")
