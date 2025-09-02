@@ -1,10 +1,10 @@
 # ============================
-# 🖥 Streamlit App (v19_plus_full)
+# 🖥 Streamlit App (v19_final)
 # ============================
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os, json, joblib, io, datetime
+import os, json, joblib, datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import (
@@ -85,11 +85,10 @@ def run_pipeline(X, y):
 # Streamlit App
 # ============================
 st.set_page_config(page_title="Parkinson’s Prediction", layout="wide")
-st.title("🧠 Parkinson’s Prediction Project (v19_plus_full)")
+st.title("🧠 Parkinson’s Prediction Project (v19_final)")
 
 tabs = st.tabs([
-    "EDA", "Model Results", "Prediction", "Retrain",
-    "Explainability", "Training Log", "Playground"
+    "EDA", "Model Results", "Prediction", "Explainability", "Training Log", "Retrain", "Playground"
 ])
 
 # -------------------------
@@ -197,9 +196,34 @@ with tabs[2]:
         st.error("No trained model found.")
 
 # -------------------------
-# Tab 4: Retrain (דינאמי)
+# Tab 4: Explainability
 # -------------------------
 with tabs[3]:
+    st.header("🧾 Explainability")
+    shap_path = os.path.join(ASSETS_DIR,"shap_summary.png")
+    if os.path.exists(shap_path):
+        st.image(shap_path)
+    else:
+        st.info("No SHAP results yet.")
+
+# -------------------------
+# Tab 5: Training Log
+# -------------------------
+with tabs[4]:
+    st.header("📜 Training Log")
+    log_path = os.path.join(ASSETS_DIR,"training_log.csv")
+    if os.path.exists(log_path):
+        log_df = pd.read_csv(log_path)
+        st.dataframe(log_df)
+        st.download_button("⬇️ Download Log CSV", log_df.to_csv(index=False).encode("utf-8"),
+                           "training_log.csv","text/csv")
+    else:
+        st.info("No log yet.")
+
+# -------------------------
+# Tab 6: Retrain (דינאמי)
+# -------------------------
+with tabs[5]:
     st.header("🔄 Retrain Models")
     option = st.radio("Training Mode", ["Pipeline (all models)", "Custom"])
     uploaded = st.file_uploader("Upload new dataset (CSV)", type=["csv"])
@@ -238,31 +262,6 @@ with tabs[3]:
                     log_df = new_row
                 log_df.to_csv(log_path,index=False)
                 st.success(f"🎉 {new_best_name} promoted!")
-
-# -------------------------
-# Tab 5: Explainability
-# -------------------------
-with tabs[4]:
-    st.header("🧾 Explainability")
-    shap_path = os.path.join(ASSETS_DIR,"shap_summary.png")
-    if os.path.exists(shap_path):
-        st.image(shap_path)
-    else:
-        st.info("No SHAP results yet.")
-
-# -------------------------
-# Tab 6: Training Log
-# -------------------------
-with tabs[5]:
-    st.header("📜 Training Log")
-    log_path = os.path.join(ASSETS_DIR,"training_log.csv")
-    if os.path.exists(log_path):
-        log_df = pd.read_csv(log_path)
-        st.dataframe(log_df)
-        st.download_button("⬇️ Download Log CSV", log_df.to_csv(index=False).encode("utf-8"),
-                           "training_log.csv","text/csv")
-    else:
-        st.info("No log yet.")
 
 # -------------------------
 # Tab 7: Playground
