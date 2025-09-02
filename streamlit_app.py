@@ -122,7 +122,7 @@ with tabs[0]:
 
     with col1:
         fig, ax = plt.subplots()
-        sns.countplot(x="status", data=df, palette="Set2", ax=ax)
+        sns.countplot(x="status", data=df, hue="status", palette="Set2", legend=False, ax=ax)
         ax.set_title("Target Distribution")
         st.pyplot(fig)
 
