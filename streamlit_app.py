@@ -1,7 +1,8 @@
+
 import streamlit as st
 import pandas as pd
 import numpy as np
-import joblib
+import joblib, os
 from io import BytesIO
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -13,10 +14,41 @@ from sklearn.metrics import (
 )
 
 # ============================
-# 1. טעינת מודל ו-Scaler
+# 1. טעינת מודל ו-Scaler (עם Fallback)
 # ============================
-model = joblib.load("models/best_model.joblib")
-scaler = joblib.load("models/scaler.joblib")
+def load_or_train_model():
+    if os.path.exists("models/best_model.joblib") and os.path.exists("models/scaler.joblib"):
+        model = joblib.load("models/best_model.joblib")
+        scaler = joblib.load("models/scaler.joblib")
+        st.success("✅ Model & Scaler loaded from /models/")
+    else:
+        st.warning("⚠️ No saved model found. Training a quick fallback model...")
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.ensemble import RandomForestClassifier
+
+        # Load dataset from UCI
+        url = "https://archive.ics.uci.edu/ml/machine-learning-databases/parkinsons/parkinsons.data"
+        df = pd.read_csv(url)
+
+        X = df.drop(columns=["name", "status"])
+        y = df["status"]
+
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+
+        X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42, stratify=y)
+
+        model = RandomForestClassifier(n_estimators=200, random_state=42)
+        model.fit(X_train, y_train)
+
+        os.makedirs("models", exist_ok=True)
+        joblib.dump(model, "models/best_model.joblib")
+        joblib.dump(scaler, "models/scaler.joblib")
+        st.success("✅ Quick model trained & saved!")
+
+    return model, scaler
+
+model, scaler = load_or_train_model()
 
 # ============================
 # 2. Prediction
@@ -88,7 +120,6 @@ def run_eda(df):
 
     tab1, tab2, tab3, tab4 = st.tabs(["🎯 Target Distribution", "📊 Histograms", "📦 Boxplots", "🔥 Correlation"])
 
-    # 1. Target Distribution
     with tab1:
         if "status" in df.columns:
             fig, ax = plt.subplots()
@@ -99,9 +130,7 @@ def run_eda(df):
         else:
             st.info("⚠️ אין עמודת 'status' בקובץ – לא ניתן להציג התפלגות יעד")
 
-    # 2. Histograms
     with tab2:
-        st.write("התפלגות פיצ'רים עיקריים")
         numeric_cols = df.select_dtypes(include=np.number).columns[:6]
         fig, axes = plt.subplots(2, 3, figsize=(12,6))
         axes = axes.flatten()
@@ -111,7 +140,6 @@ def run_eda(df):
         plt.tight_layout()
         st.pyplot(fig)
 
-    # 3. Boxplots
     with tab3:
         if "status" in df.columns:
             fig, axes = plt.subplots(2, 3, figsize=(12,6))
@@ -125,7 +153,6 @@ def run_eda(df):
         else:
             st.info("⚠️ אין עמודת 'status' בקובץ – לא ניתן להציג Boxplots")
 
-    # 4. Correlation Heatmap
     with tab4:
         fig, ax = plt.subplots(figsize=(10,8))
         corr = df.corr()
@@ -143,6 +170,7 @@ def playground_ui(df):
         st.warning("⚠️ חסרה עמודת 'status' – אי אפשר להריץ Playground")
         return
 
+    from sklearn.preprocessing import StandardScaler
     X = df.drop(columns=["status"])
     y = df["status"]
     X_scaled = scaler.fit_transform(X)
@@ -212,7 +240,6 @@ def playground_ui(df):
         results_df = pd.DataFrame(results).T
         st.dataframe(results_df)
 
-        # ROC Comparison
         fig, ax = plt.subplots()
         for choice in choices:
             if choice == "RandomForest":
@@ -269,7 +296,6 @@ if uploaded_file:
             st.subheader("✅ תוצאות החיזוי")
             st.dataframe(results)
 
-            # הורדות
             csv = results.to_csv(index=False).encode("utf-8-sig")
             st.download_button("⬇️ הורד CSV", data=csv, file_name="predictions.csv", mime="text/csv")
 
