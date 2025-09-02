@@ -12,3 +12,5 @@ streamlit
 shap
 statsmodels
 xlsxwriter
+llvmlite>=0.43.0
+numba>=0.60.0
