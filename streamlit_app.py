@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
-    roc_auc_score, RocCurveDisplay, precision_recall_curve, auc
+    roc_auc_score, RocCurveDisplay
 )
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
@@ -114,17 +114,32 @@ with tabs[1]:
     st.header("🤖 Model Results")
     leaderboard = load_leaderboard()
     if leaderboard:
-        lb_df = pd.DataFrame({m: s for m,s in leaderboard.items()}).T.reset_index().rename(columns={"index":"Model"})
-        lb_df = lb_df.sort_values(by="roc_auc", ascending=False).reset_index(drop=True)
-        lb_df.index = lb_df.index + 1
-        lb_df["Rank"] = lb_df.index
-        best_row = lb_df.iloc[0]
-        st.success(f"🏆 Best Model: **{best_row['Model']}** (ROC-AUC={best_row['roc_auc']:.3f})")
-        st.dataframe(lb_df)
-        export_download(lb_df,"leaderboard.csv")
-        fig, ax = plt.subplots(figsize=(8,5))
-        sns.barplot(x="roc_auc", y="Model", data=lb_df, palette="Blues_r", ax=ax)
-        st.pyplot(fig)
+        lb_df = pd.DataFrame(leaderboard).T.reset_index().rename(columns={"index": "Model"})
+
+        # אם אין roc_auc בעמודות, נוציא אותו ידנית
+        if "roc_auc" not in lb_df.columns:
+            def extract_auc(x):
+                if isinstance(x, dict) and "roc_auc" in x:
+                    return x["roc_auc"]
+                return None
+            lb_df["roc_auc"] = lb_df.apply(lambda row: extract_auc(row.to_dict()), axis=1)
+
+        if lb_df["roc_auc"].notnull().any():
+            lb_df = lb_df.sort_values(by="roc_auc", ascending=False).reset_index(drop=True)
+            lb_df.index = lb_df.index + 1
+            lb_df["Rank"] = lb_df.index
+
+            best_row = lb_df.iloc[0]
+            st.success(f"🏆 Best Model: **{best_row['Model']}** (ROC-AUC={best_row['roc_auc']:.3f})")
+
+            st.dataframe(lb_df)
+            export_download(lb_df, "leaderboard.csv")
+
+            fig, ax = plt.subplots(figsize=(8, 5))
+            sns.barplot(x="roc_auc", y="Model", data=lb_df, palette="Blues_r", ax=ax)
+            st.pyplot(fig)
+        else:
+            st.warning("⚠️ Leaderboard found but no ROC-AUC values.")
     else:
         st.warning("No leaderboard found.")
 
