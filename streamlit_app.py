@@ -1,57 +1,26 @@
-
 import streamlit as st
 import pandas as pd
-import numpy as np
-import joblib, os
+import joblib
 from io import BytesIO
 import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
     roc_curve, auc, precision_recall_curve,
-    confusion_matrix, ConfusionMatrixDisplay,
-    accuracy_score, roc_auc_score
+    confusion_matrix, ConfusionMatrixDisplay
 )
 
 # ============================
-# 1. טעינת מודל ו-Scaler (עם Fallback)
+# 1. טעינת מודל ו-Scaler
 # ============================
-def load_or_train_model():
-    if os.path.exists("models/best_model.joblib") and os.path.exists("models/scaler.joblib"):
-        model = joblib.load("models/best_model.joblib")
-        scaler = joblib.load("models/scaler.joblib")
-        st.success("✅ Model & Scaler loaded from /models/")
-    else:
-        st.warning("⚠️ No saved model found. Training a quick fallback model...")
-        from sklearn.preprocessing import StandardScaler
-        from sklearn.ensemble import RandomForestClassifier
-
-        # Load dataset from UCI
-        url = "https://archive.ics.uci.edu/ml/machine-learning-databases/parkinsons/parkinsons.data"
-        df = pd.read_csv(url)
-
-        X = df.drop(columns=["name", "status"])
-        y = df["status"]
-
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
-
-        X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42, stratify=y)
-
-        model = RandomForestClassifier(n_estimators=200, random_state=42)
-        model.fit(X_train, y_train)
-
-        os.makedirs("models", exist_ok=True)
-        joblib.dump(model, "models/best_model.joblib")
-        joblib.dump(scaler, "models/scaler.joblib")
-        st.success("✅ Quick model trained & saved!")
-
-    return model, scaler
-
-model, scaler = load_or_train_model()
+try:
+    model = joblib.load("models/best_model.joblib")
+    scaler = joblib.load("models/scaler.joblib")
+    st.success("✅ Model & Scaler loaded from /models/")
+except Exception as e:
+    st.error(f"❌ לא ניתן לטעון מודל/סקיילר: {e}")
+    st.stop()
 
 # ============================
-# 2. Prediction
+# 2. Prediction עם Risk Labels
 # ============================
 def predict_with_risk(model, scaler, samples):
     samples_scaled = scaler.transform(samples)
@@ -77,7 +46,7 @@ def predict_with_risk(model, scaler, samples):
     return results, preds, probs
 
 # ============================
-# 3. Model Evaluation Curves
+# 3. גרפים להערכת מודל
 # ============================
 def plot_model_curves(model, X, y_true):
     probs = model.predict_proba(X)[:, 1]
@@ -113,168 +82,12 @@ def plot_model_curves(model, X, y_true):
     st.pyplot(fig)
 
 # ============================
-# 4. EDA
+# 4. Streamlit UI
 # ============================
-def run_eda(df):
-    st.subheader("🔍 Exploratory Data Analysis (EDA)")
+st.title("🧠 Parkinson’s Prediction App (v16 Extension)")
+st.markdown("חיזוי סטטוס מחלת פרקינסון עם 🟢🟡🔴 Risk Labels, טבלאות, גרפים והורדה ל-CSV/XLSX")
 
-    tab1, tab2, tab3, tab4 = st.tabs(["🎯 Target Distribution", "📊 Histograms", "📦 Boxplots", "🔥 Correlation"])
-
-    with tab1:
-        if "status" in df.columns:
-            fig, ax = plt.subplots()
-            df["status"].value_counts().plot(kind="bar", ax=ax, color=["green", "red"])
-            ax.set_title("Distribution of Target (status)")
-            ax.set_xticklabels(["Healthy", "Parkinson’s"], rotation=0)
-            st.pyplot(fig)
-        else:
-            st.info("⚠️ אין עמודת 'status' בקובץ – לא ניתן להציג התפלגות יעד")
-
-    with tab2:
-        numeric_cols = df.select_dtypes(include=np.number).columns[:6]
-        fig, axes = plt.subplots(2, 3, figsize=(12,6))
-        axes = axes.flatten()
-        for i, col in enumerate(numeric_cols):
-            sns.histplot(df[col], kde=True, ax=axes[i], color="skyblue")
-            axes[i].set_title(col)
-        plt.tight_layout()
-        st.pyplot(fig)
-
-    with tab3:
-        if "status" in df.columns:
-            fig, axes = plt.subplots(2, 3, figsize=(12,6))
-            axes = axes.flatten()
-            numeric_cols = df.select_dtypes(include=np.number).columns[:6]
-            for i, col in enumerate(numeric_cols):
-                sns.boxplot(x="status", y=col, data=df, ax=axes[i])
-                axes[i].set_title(f"{col} by Status")
-            plt.tight_layout()
-            st.pyplot(fig)
-        else:
-            st.info("⚠️ אין עמודת 'status' בקובץ – לא ניתן להציג Boxplots")
-
-    with tab4:
-        fig, ax = plt.subplots(figsize=(10,8))
-        corr = df.corr()
-        sns.heatmap(corr, cmap="coolwarm", center=0, ax=ax)
-        ax.set_title("Correlation Heatmap")
-        st.pyplot(fig)
-
-# ============================
-# 5. Playground
-# ============================
-def playground_ui(df):
-    st.subheader("🎮 Model Playground")
-
-    if "status" not in df.columns:
-        st.warning("⚠️ חסרה עמודת 'status' – אי אפשר להריץ Playground")
-        return
-
-    from sklearn.preprocessing import StandardScaler
-    X = df.drop(columns=["status"])
-    y = df["status"]
-    X_scaled = scaler.fit_transform(X)
-    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42, stratify=y)
-
-    mode = st.radio("בחר מצב:", ["🔘 Single Model", "📊 Compare Models"])
-
-    if mode == "🔘 Single Model":
-        model_choice = st.selectbox("בחר מודל:", ["RandomForest", "XGB", "LGBM", "CatBoost"])
-
-        if model_choice == "RandomForest":
-            from sklearn.ensemble import RandomForestClassifier
-            n_estimators = st.slider("n_estimators", 50, 500, 100, step=50)
-            max_depth = st.slider("max_depth", 2, 20, 5)
-            model = RandomForestClassifier(n_estimators=n_estimators, max_depth=max_depth, random_state=42)
-
-        elif model_choice == "XGB":
-            from xgboost import XGBClassifier
-            n_estimators = st.slider("n_estimators", 50, 500, 100, step=50)
-            learning_rate = st.slider("learning_rate", 0.01, 0.5, 0.1)
-            model = XGBClassifier(n_estimators=n_estimators, learning_rate=learning_rate, eval_metric="logloss", random_state=42)
-
-        elif model_choice == "LGBM":
-            from lightgbm import LGBMClassifier
-            n_estimators = st.slider("n_estimators", 50, 500, 100, step=50)
-            learning_rate = st.slider("learning_rate", 0.01, 0.5, 0.1)
-            model = LGBMClassifier(n_estimators=n_estimators, learning_rate=learning_rate, random_state=42)
-
-        elif model_choice == "CatBoost":
-            from catboost import CatBoostClassifier
-            depth = st.slider("depth", 2, 10, 6)
-            iterations = st.slider("iterations", 50, 500, 100, step=50)
-            model = CatBoostClassifier(depth=depth, iterations=iterations, verbose=0, random_state=42)
-
-        if st.button("🚀 הרץ מודל"):
-            model.fit(X_train, y_train)
-            preds = model.predict(X_test)
-            acc = accuracy_score(y_test, preds)
-            auc = roc_auc_score(y_test, model.predict_proba(X_test)[:, 1])
-            st.write(f"📊 Accuracy: {acc:.3f}, AUC: {auc:.3f}")
-            plot_model_curves(model, X_test, y_test)
-
-    elif mode == "📊 Compare Models":
-        choices = st.multiselect("בחר מודלים:", ["RandomForest", "XGB", "LGBM", "CatBoost"], default=["RandomForest", "XGB", "LGBM", "CatBoost"])
-        results = {}
-
-        for choice in choices:
-            if choice == "RandomForest":
-                from sklearn.ensemble import RandomForestClassifier
-                model = RandomForestClassifier(random_state=42)
-            elif choice == "XGB":
-                from xgboost import XGBClassifier
-                model = XGBClassifier(use_label_encoder=False, eval_metric="logloss", random_state=42)
-            elif choice == "LGBM":
-                from lightgbm import LGBMClassifier
-                model = LGBMClassifier(random_state=42)
-            elif choice == "CatBoost":
-                from catboost import CatBoostClassifier
-                model = CatBoostClassifier(verbose=0, random_state=42)
-
-            model.fit(X_train, y_train)
-            preds = model.predict(X_test)
-            acc = accuracy_score(y_test, preds)
-            auc = roc_auc_score(y_test, model.predict_proba(X_test)[:, 1])
-            results[choice] = {"Accuracy": acc, "AUC": auc}
-
-        results_df = pd.DataFrame(results).T
-        st.dataframe(results_df)
-
-        fig, ax = plt.subplots()
-        for choice in choices:
-            if choice == "RandomForest":
-                from sklearn.ensemble import RandomForestClassifier
-                model = RandomForestClassifier(random_state=42)
-            elif choice == "XGB":
-                from xgboost import XGBClassifier
-                model = XGBClassifier(use_label_encoder=False, eval_metric="logloss", random_state=42)
-            elif choice == "LGBM":
-                from lightgbm import LGBMClassifier
-                model = LGBMClassifier(random_state=42)
-            elif choice == "CatBoost":
-                from catboost import CatBoostClassifier
-                model = CatBoostClassifier(verbose=0, random_state=42)
-
-            model.fit(X_train, y_train)
-            probs = model.predict_proba(X_test)[:, 1]
-            fpr, tpr, _ = roc_curve(y_test, probs)
-            roc_auc = auc(fpr, tpr)
-            ax.plot(fpr, tpr, label=f"{choice} (AUC={roc_auc:.2f})")
-
-        ax.plot([0, 1], [0, 1], linestyle="--", color="gray")
-        ax.set_title("ROC Curves Comparison")
-        ax.set_xlabel("False Positive Rate")
-        ax.set_ylabel("True Positive Rate")
-        ax.legend()
-        st.pyplot(fig)
-
-# ============================
-# 6. Streamlit UI
-# ============================
-st.title("🧠 Parkinson’s Prediction System")
-st.markdown("מערכת מלאה: 🔍 EDA | 🔮 Prediction | 🎮 Playground")
-
-uploaded_file = st.file_uploader("📂 העלה קובץ CSV/XLSX", type=["csv", "xlsx"])
+uploaded_file = st.file_uploader("📂 העלה קובץ CSV/XLSX עם נתוני מטופלים", type=["csv", "xlsx"])
 
 if uploaded_file:
     if uploaded_file.name.endswith(".csv"):
@@ -282,33 +95,29 @@ if uploaded_file:
     else:
         data = pd.read_excel(uploaded_file)
 
-    st.subheader("📊 הצצה לנתונים")
+    st.subheader("📊 נתונים שהועלו")
     st.dataframe(data.head())
 
-    tabEDA, tabPred, tabPlay = st.tabs(["🔍 EDA", "🔮 Prediction", "🎮 Playground"])
+    if st.button("🔮 בצע חיזוי"):
+        results, preds, probs = predict_with_risk(model, scaler, data)
+        st.subheader("✅ תוצאות החיזוי")
+        st.dataframe(results)
 
-    with tabEDA:
-        run_eda(data)
+        # הורדה ל-CSV
+        csv = results.to_csv(index=False).encode("utf-8-sig")
+        st.download_button("⬇️ הורד CSV", data=csv, file_name="predictions.csv", mime="text/csv")
 
-    with tabPred:
-        if st.button("בצע חיזוי"):
-            results, preds, probs = predict_with_risk(model, scaler, data)
-            st.subheader("✅ תוצאות החיזוי")
-            st.dataframe(results)
+        # הורדה ל-Excel
+        buffer = BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            results.to_excel(writer, index=False)
+        st.download_button("⬇️ הורד Excel", data=buffer.getvalue(), file_name="predictions.xlsx", mime="application/vnd.ms-excel")
 
-            csv = results.to_csv(index=False).encode("utf-8-sig")
-            st.download_button("⬇️ הורד CSV", data=csv, file_name="predictions.csv", mime="text/csv")
-
-            buffer = BytesIO()
-            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                results.to_excel(writer, index=False)
-            st.download_button("⬇️ הורד Excel", data=buffer.getvalue(), file_name="predictions.xlsx", mime="application/vnd.ms-excel")
-
-            if "status" in data.columns:
-                st.subheader("📈 Model Evaluation Curves")
-                X_eval = scaler.transform(data.drop(columns=["status"]))
-                y_eval = data["status"]
-                plot_model_curves(model, X_eval, y_eval)
-
-    with tabPlay:
-        playground_ui(data)
+        # אם יש "status" בנתונים – נציג עקומות
+        if "status" in data.columns:
+            st.subheader("📈 Model Evaluation Curves")
+            X_eval = scaler.transform(data.drop(columns=["status"]))
+            y_eval = data["status"]
+            plot_model_curves(model, X_eval, y_eval)
+        else:
+            st.info("⚠️ לא נמצאה עמודת 'status' בקובץ – לא ניתן להציג עקומות ROC/PR/CM")
